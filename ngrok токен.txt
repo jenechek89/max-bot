@@ -1,0 +1,2 @@
+ngrok config add-authtoken 3D7R4xUa4fdcnn5pM0pyjVCmbbe_4Pmw2ESQLvd6i8o2zmSwf
+токен бот f9LHodD0cOINEIw6-76qeysg-LK-r8ht2r9opywflXQBm6lGP7coUqQ8bVBXBsA_5WiYdFMScp9dCHHdIDVG
