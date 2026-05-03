@@ -1,206 +1,229 @@
-const express = require("express");
-const bodyParser = require("body-parser");
-const axios = require("axios");
+import { Bot } from '@maxhub/max-bot-api';
+import { google } from 'googleapis';
 
-const app = express();
-app.use(bodyParser.json());
+const bot = new Bot(process.env.BOT_TOKEN);
 
-// =====================
-// 🔑 ENV
-// =====================
-const TOKEN = process.env.TOKEN;
-const MANAGER_CHAT_ID = process.env.MANAGER_CHAT_ID;
+// ===== НАСТРОЙКИ =====
+const MANAGER_ID = process.env.MANAGER_ID;
+const GROUP_ID = process.env.GROUP_ID;
 
-// =====================
-// 🧠 ПАМЯТЬ (временно)
-// =====================
-const users = {};
+const PRIVACY_LINK = "https://disk.yandex.ru/i/your-privacy";
+const PROCESSING_LINK = "https://disk.yandex.ru/i/your-processing";
 
-// =====================
-function getUser(id) {
-    if (!users[id]) {
-        users[id] = {
-            stage: "start",
-            data: {
-                consent_data: false,
-                consent_marketing: false
-            },
-            lastActivity: Date.now()
-        };
-    }
-    return users[id];
+const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
+
+// ===== ПАМЯТЬ =====
+const users = new Map();
+const REMINDERS = new Map();
+
+// ===== GOOGLE SHEETS =====
+const auth = new google.auth.GoogleAuth({
+  credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS),
+  scopes: ['https://www.googleapis.com/auth/spreadsheets']
+});
+
+const sheets = google.sheets({ version: 'v4', auth });
+
+async function saveToSheets(user) {
+  try {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID,
+      range: 'Лиды!A:E',
+      valueInputOption: 'RAW',
+      requestBody: {
+        values: [[
+          new Date().toLocaleString(),
+          user.name,
+          user.phone,
+          user.budget,
+          user.goal
+        ]]
+      }
+    });
+  } catch (e) {
+    console.log('Ошибка записи в таблицу', e);
+  }
 }
 
-// =====================
-async function sendMessage(userId, text, buttons = []) {
-    try {
-        await axios.post("https://api.max.ru/messages", {
-            user_id: userId,
-            text,
-            buttons
-        }, {
-            headers: {
-                Authorization: `Bearer ${TOKEN}`,
-                "Content-Type": "application/json"
-            }
+// ===== НАПОМИНАНИЕ 24Ч =====
+function setReminder(userId) {
+  if (REMINDERS.has(userId)) return;
+
+  const timeout = setTimeout(async () => {
+    const user = users.get(userId);
+
+    if (user && user.stage !== 'done') {
+      try {
+        await bot.api.sendMessage({
+          chat_id: userId,
+          text: `👋 Вы начали подбор недвижимости, но не завершили.
+
+Могу подобрать для вас лучшие варианты 🏠
+Нажмите /start и продолжим.`
         });
-    } catch (err) {
-        console.log("❌ send error:", err.response?.data || err.message);
+      } catch (e) {
+        console.log('Ошибка напоминания', e);
+      }
     }
+
+    REMINDERS.delete(userId);
+  }, 24 * 60 * 60 * 1000);
+
+  REMINDERS.set(userId, timeout);
 }
 
-// =====================
-async function notifyManager(data) {
-    const message = `
-🏠 Новый лид
+// ===== КОМАНДЫ =====
+bot.api.setMyCommands([
+  { name: 'start', description: 'Начать' }
+]);
 
-👤 Имя: ${data.name}
-📞 Телефон: ${data.phone}
-🎯 Цель: ${data.goal}
-💰 Бюджет: ${data.budget}
-📣 Маркетинг: ${data.consent_marketing ? "да" : "нет"}
+// ===== ПРИВЕТСТВИЕ =====
+bot.on('message', async (ctx) => {
+  const userId = ctx.user()?.user_id;
+  const text = ctx.text?.();
+
+  if (!text) return;
+
+  if (!users.has(userId) && text !== '/start') {
+    return ctx.reply(
+`👋 Привет!
+
+Я бот агентства недвижимости 🏠
+
+Помогу подобрать:
+• новостройки
+• вторичку
+• загородные дома
+
+Чтобы начать — нажми /start`
+    );
+  }
+});
+
+// ===== /START → СОГЛАСИЕ =====
+bot.command('start', async (ctx) => {
+  const userId = ctx.user()?.user_id;
+
+  users.set(userId, { stage: 'consent' });
+
+  setReminder(userId);
+
+  return ctx.reply(
+`Еще чуть-чуть и можем начинать:
+
+Продолжая, вы соглашаетесь с Политикой персональных данных:
+${PRIVACY_LINK}
+
+и Обработкой персональных данных:
+${PROCESSING_LINK}`,
+{
+  inline_keyboard: [
+    [{ text: "✅ ПРОДОЛЖИТЬ", callback_data: "continue" }]
+  ]
+}
+  );
+});
+
+// ===== КНОПКА ПРОДОЛЖИТЬ =====
+bot.on('callback_query', async (ctx) => {
+  const userId = ctx.user()?.user_id;
+  const data = ctx.data();
+
+  if (data === 'continue') {
+    users.set(userId, { stage: 'goal' });
+
+    return ctx.reply(
+`Отлично 👍
+
+Что вас интересует?
+1 - Новостройки
+2 - Вторичка
+3 - Загородные дома`
+    );
+  }
+});
+
+// ===== ОСНОВНАЯ ВОРОНКА =====
+bot.on('message', async (ctx) => {
+  const userId = ctx.user()?.user_id;
+  const text = ctx.text?.trim();
+
+  if (!users.has(userId) || !text) return;
+
+  const user = users.get(userId);
+
+  // цель
+  if (user.stage === 'goal') {
+    user.goal = text;
+    user.stage = 'budget';
+
+    return ctx.reply('💰 Какой бюджет рассматриваешь?');
+  }
+
+  // бюджет
+  if (user.stage === 'budget') {
+    user.budget = text;
+    user.stage = 'name';
+
+    return ctx.reply('Как тебя зовут?');
+  }
+
+  // имя
+  if (user.stage === 'name') {
+    user.name = text;
+    user.stage = 'phone';
+
+    return ctx.reply('📱 Оставь номер телефона:');
+  }
+
+  // телефон → ФИНАЛ
+  if (user.stage === 'phone') {
+    user.phone = text;
+    user.stage = 'done';
+
+    // отменяем напоминание
+    if (REMINDERS.has(userId)) {
+      clearTimeout(REMINDERS.get(userId));
+      REMINDERS.delete(userId);
+    }
+
+    const lead =
+`🔥 НОВЫЙ ЛИД
+
+👤 Имя: ${user.name}
+📱 Телефон: ${user.phone}
+💰 Бюджет: ${user.budget}
+🏠 Интерес: ${user.goal}
 `;
 
-    await sendMessage(MANAGER_CHAT_ID, message);
-}
-
-// =====================
-// 📩 WEBHOOK
-// =====================
-app.post("/webhook", async (req, res) => {
-    const update = req.body;
-
-    console.log("UPDATE:", JSON.stringify(update, null, 2));
-
-    const userId = update.user_id || update.chat_id;
-    const text = update.message?.text;
-
-    if (!userId) return res.sendStatus(200);
-
-    const user = getUser(userId);
-    user.lastActivity = Date.now();
-
-    // START
-    if (text === "/start") {
-        user.stage = "consent_data";
-
-        await sendMessage(userId,
-            "Перед началом работы нужно согласие на обработку данных:",
-            [
-                { text: "Открыть документ", url: "https://disk.yandex.ru/i/NzUXt3p-QlhYbw" },
-                { text: "Согласен" }
-            ]
-        );
+    // менеджеру
+    if (MANAGER_ID) {
+      await bot.api.sendMessage({
+        chat_id: MANAGER_ID,
+        text: lead
+      });
     }
 
-    // consent data
-    else if (text === "Согласен" && user.stage === "consent_data") {
-        user.data.consent_data = true;
-        user.stage = "consent_marketing";
-
-        await sendMessage(userId,
-            "Разрешаете отправлять подборки?",
-            ["Согласен", "Не согласен"]
-        );
+    // в группу
+    if (GROUP_ID) {
+      await bot.api.sendMessage({
+        chat_id: GROUP_ID,
+        text: lead
+      });
     }
 
-    // marketing yes
-    else if (text === "Согласен" && user.stage === "consent_marketing") {
-        user.data.consent_marketing = true;
-        user.stage = "goal";
+    // в таблицу
+    await saveToSheets(user);
 
-        await sendMessage(userId,
-            "Что вас интересует?",
-            ["Квартира", "Дом", "Инвестиции"]
-        );
-    }
+    return ctx.reply(
+`Спасибо! 🎉
 
-    // marketing no
-    else if (text === "Не согласен" && user.stage === "consent_marketing") {
-        user.data.consent_marketing = false;
-        user.stage = "goal";
-
-        await sendMessage(userId,
-            "Ок, без рассылок. Что ищем?",
-            ["Квартира", "Дом", "Инвестиции"]
-        );
-    }
-
-    // goal
-    else if (["Квартира", "Дом", "Инвестиции"].includes(text)) {
-        user.data.goal = text;
-        user.stage = "budget";
-
-        await sendMessage(userId,
-            "Какой бюджет?",
-            ["до 3 млн", "3–5 млн", "5–8 млн", "8+ млн"]
-        );
-    }
-
-    // budget
-    else if (text && text.includes("млн")) {
-        user.data.budget = text;
-        user.stage = "name";
-
-        await sendMessage(userId, "Введите имя");
-    }
-
-    // name
-    else if (user.stage === "name") {
-        user.data.name = text;
-        user.stage = "phone";
-
-        await sendMessage(userId, "Введите телефон");
-    }
-
-    // phone
-    else if (user.stage === "phone") {
-        user.data.phone = text;
-        user.stage = "done";
-
-        console.log("🔥 ЛИД:", user.data);
-
-        await notifyManager(user.data);
-
-        await sendMessage(userId,
-            "Спасибо! Скоро свяжемся 🏠"
-        );
-    }
-
-    res.sendStatus(200);
+Мы уже подбираем варианты.
+С вами скоро свяжется менеджер.`
+    );
+  }
 });
 
-// =====================
-// ⏱ напоминание 24ч
-// =====================
-setInterval(() => {
-    const now = Date.now();
+bot.start();
 
-    for (let id in users) {
-        let u = users[id];
-
-        if (
-            !u.data.phone &&
-            u.data.consent_data &&
-            now - u.lastActivity > 24 * 60 * 60 * 1000
-        ) {
-            if (u.data.consent_marketing) {
-                sendMessage(id,
-                    "Вы не завершили заявку. Продолжим?",
-                    ["Продолжить"]
-                );
-            }
-
-            u.lastActivity = now;
-        }
-    }
-}, 60000);
-
-// =====================
-// 🚀 START SERVER
-// =====================
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-    console.log("🚀 Bot running on port " + PORT);
-});
+console.log('🚀 FULL BOT WORKING');
