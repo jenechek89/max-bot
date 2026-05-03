@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
-    "@maxhub/max-bot-api": "^latest",
-    "googleapis": "^latest"
+    "@maxhub/max-bot-api": "latest",
+    "googleapis": "latest"
   }
 }
