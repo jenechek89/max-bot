@@ -98,6 +98,11 @@ bot.api.setMyCommands([
 ]);
 
 // ===================== ВХОДЯЩИЕ СООБЩЕНИЯ =====================
+bot.on('*', async (ctx) => {
+  console.log("🔥 RAW EVENT RECEIVED:");
+  console.log(JSON.stringify(ctx, null, 2));
+});
+
 bot.on('message_created', async (ctx) => {
   const msg = ctx?.message || ctx?.update?.message;
   if (!msg) return;
