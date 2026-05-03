@@ -99,11 +99,11 @@ bot.api.setMyCommands([
 
 // ===================== ВХОДЯЩИЕ СООБЩЕНИЯ =====================
 bot.on('message_created', async (ctx) => {
-  const msg = getMessage(ctx);
+  const msg = ctx?.message || ctx?.update?.message;
   if (!msg) return;
 
-  const userId = getUserId(msg);
-  const text = getText(msg);
+  const userId = msg?.sender?.user_id;
+  const text = msg?.body?.text;
 
   if (!userId || !text) return;
 
