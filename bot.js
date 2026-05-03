@@ -1,7 +1,32 @@
 import { Bot } from '@maxhub/max-bot-api';
+import express from 'express';
 import { google } from 'googleapis';
 
+// ===================== BOT =====================
 const bot = new Bot(process.env.BOT_TOKEN);
+
+// ===================== WEBHOOK SERVER =====================
+const app = express();
+app.use(express.json());
+
+// 🔥 ВАЖНО: сюда приходят все события MAX
+app.post('/webhook', (req, res) => {
+  console.log("🔥 WEBHOOK HIT:", JSON.stringify(req.body, null, 2));
+
+  try {
+    bot.handleUpdate(req.body);
+  } catch (e) {
+    console.log("BOT HANDLE ERROR:", e);
+  }
+
+  res.send("OK");
+});
+
+const PORT = process.env.PORT || 10000;
+
+app.listen(PORT, () => {
+  console.log(`🌐 HTTP server running on ${PORT}`);
+});
 
 // ===================== НАСТРОЙКИ =====================
 const MANAGER_ID = process.env.MANAGER_ID;
@@ -51,19 +76,6 @@ async function saveToSheet(user) {
   }
 }
 
-// ===================== УТИЛИТЫ =====================
-function getMessage(ctx) {
-  return ctx?.message || ctx?.update?.message;
-}
-
-function getUserId(msg) {
-  return msg?.sender?.user_id;
-}
-
-function getText(msg) {
-  return msg?.body?.text;
-}
-
 // ===================== НАПОМИНАНИЕ =====================
 function setReminder(userId) {
   if (reminders.has(userId)) return;
@@ -97,14 +109,15 @@ bot.api.setMyCommands([
   { name: 'start', description: 'Начать' }
 ]);
 
-// ===================== ВХОДЯЩИЕ СООБЩЕНИЯ =====================
+// ===================== DEBUG (СМОТРИМ ВСЁ ЧТО ПРИХОДИТ) =====================
 bot.on('*', async (ctx) => {
   console.log("🔥 RAW EVENT RECEIVED:");
   console.log(JSON.stringify(ctx, null, 2));
 });
 
+// ===================== ОСНОВНАЯ ЛОГИКА =====================
 bot.on('message_created', async (ctx) => {
-  const msg = ctx?.message || ctx?.update?.message;
+  const msg = ctx?.message;
   if (!msg) return;
 
   const userId = msg?.sender?.user_id;
@@ -112,16 +125,15 @@ bot.on('message_created', async (ctx) => {
 
   if (!userId || !text) return;
 
-  // /start
-  if (text === '/start') {
+  // ===================== START =====================
+  if (text.trim().startsWith('/start')) {
     users.set(userId, { stage: 'consent' });
 
     setReminder(userId);
 
     return bot.api.sendMessage({
       chat_id: userId,
-      text:
-`👋 Добро пожаловать!
+      text: `👋 Добро пожаловать!
 
 Я помогу подобрать недвижимость 🏠
 
@@ -129,18 +141,20 @@ bot.on('message_created', async (ctx) => {
 
 Продолжая, вы соглашаетесь с:
 
-Политикой персональных данных:
+📄 Политикой персональных данных:
 ${PRIVACY_LINK}
 
-Обработкой персональных данных:
-${PROCESSING_LINK}`
+📄 Обработкой персональных данных:
+${PROCESSING_LINK}
+
+Нажмите /start чтобы продолжить.`
     });
   }
 
   const user = users.get(userId);
   if (!user) return;
 
-  // шаг 1 — цель
+  // ===================== ЦЕЛЬ =====================
   if (user.stage === 'goal') {
     user.goal = text;
     user.stage = 'budget';
@@ -151,7 +165,7 @@ ${PROCESSING_LINK}`
     });
   }
 
-  // шаг 2 — бюджет
+  // ===================== БЮДЖЕТ =====================
   if (user.stage === 'budget') {
     user.budget = text;
     user.stage = 'name';
@@ -162,7 +176,7 @@ ${PROCESSING_LINK}`
     });
   }
 
-  // шаг 3 — имя
+  // ===================== ИМЯ =====================
   if (user.stage === 'name') {
     user.name = text;
     user.stage = 'phone';
@@ -173,7 +187,7 @@ ${PROCESSING_LINK}`
     });
   }
 
-  // шаг 4 — телефон (ФИНАЛ)
+  // ===================== ТЕЛЕФОН (ФИНАЛ) =====================
   if (user.stage === 'phone') {
     user.phone = text;
     user.stage = 'done';
@@ -192,7 +206,6 @@ ${PROCESSING_LINK}`
 🏠 ${user.goal}
 `;
 
-    // менеджер
     if (MANAGER_ID) {
       await bot.api.sendMessage({
         chat_id: MANAGER_ID,
@@ -200,7 +213,6 @@ ${PROCESSING_LINK}`
       });
     }
 
-    // группа
     if (GROUP_ID) {
       await bot.api.sendMessage({
         chat_id: GROUP_ID,
@@ -208,7 +220,6 @@ ${PROCESSING_LINK}`
       });
     }
 
-    // таблица
     await saveToSheet(user);
 
     return bot.api.sendMessage({
@@ -221,17 +232,7 @@ ${PROCESSING_LINK}`
   }
 });
 
-import http from 'http';
-
-const PORT = process.env.PORT || 10000;
-
-http.createServer((req, res) => {
-  res.writeHead(200);
-  res.end('OK');
-}).listen(PORT, () => {
-  console.log(`🌐 HTTP server running on ${PORT}`);
-});
-
+// ===================== START BOT =====================
 bot.start();
 
 console.log('🚀 MAX BOT RUNNING');
