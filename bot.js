@@ -85,7 +85,7 @@ function setReminder(userId) {
 
     if (user && user.stage !== 'done') {
       try {
-        await bot.api.callApi({
+        await ctx.reply({
           chat_id: userId,
           text: `👋 Напоминание
 
@@ -131,7 +131,7 @@ bot.on('message_created', async (ctx) => {
 
     setReminder(userId);
 
-    return bot.api.callApi({
+    return ctx.reply({
       chat_id: userId,
       text: `👋 Добро пожаловать!
 
@@ -159,7 +159,7 @@ ${PROCESSING_LINK}
     user.goal = text;
     user.stage = 'budget';
 
-    return bot.api.callApi({
+    return ctx.reply({
       chat_id: userId,
       text: '💰 Какой бюджет рассматриваете?'
     });
@@ -170,7 +170,7 @@ ${PROCESSING_LINK}
     user.budget = text;
     user.stage = 'name';
 
-    return bot.api.callApi({
+    return ctx.reply({
       chat_id: userId,
       text: 'Как вас зовут?'
     });
@@ -181,7 +181,7 @@ ${PROCESSING_LINK}
     user.name = text;
     user.stage = 'phone';
 
-    return bot.api.callApi({
+    return ctx.reply({
       chat_id: userId,
       text: '📱 Оставьте номер телефона:'
     });
@@ -207,14 +207,14 @@ ${PROCESSING_LINK}
 `;
 
     if (MANAGER_ID) {
-      await bot.api.callApi({
+      await ctx.reply({
         chat_id: MANAGER_ID,
         text: leadText
       });
     }
 
     if (GROUP_ID) {
-      await bot.api.callApi({
+      await ctx.reply({
         chat_id: GROUP_ID,
         text: leadText
       });
@@ -222,7 +222,7 @@ ${PROCESSING_LINK}
 
     await saveToSheet(user);
 
-    return bot.api.callApi({
+    return ctx.reply({
       chat_id: userId,
       text: `Спасибо! 🎉
 
