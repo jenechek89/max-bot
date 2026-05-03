@@ -4,6 +4,7 @@
   "type": "module",
   "dependencies": {
     "@maxhub/max-bot-api": "latest",
+    "express": "^5.2.1",
     "googleapis": "latest"
   }
 }
