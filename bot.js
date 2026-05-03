@@ -1,32 +1,8 @@
 import { Bot } from '@maxhub/max-bot-api';
-import express from 'express';
 import { google } from 'googleapis';
+import http from 'http';
 
-// ===================== BOT =====================
 const bot = new Bot(process.env.BOT_TOKEN);
-
-// ===================== WEBHOOK SERVER =====================
-const app = express();
-app.use(express.json());
-
-// 🔥 ВАЖНО: сюда приходят все события MAX
-app.post('/webhook', (req, res) => {
-  console.log("🔥 WEBHOOK HIT:", JSON.stringify(req.body, null, 2));
-
-  try {
-    bot.handleUpdate(req.body);
-  } catch (e) {
-    console.log("BOT HANDLE ERROR:", e);
-  }
-
-  res.send("OK");
-});
-
-const PORT = process.env.PORT || 10000;
-
-app.listen(PORT, () => {
-  console.log(`🌐 HTTP server running on ${PORT}`);
-});
 
 // ===================== НАСТРОЙКИ =====================
 const MANAGER_ID = process.env.MANAGER_ID;
@@ -85,7 +61,7 @@ function setReminder(userId) {
 
     if (user && user.stage !== 'done') {
       try {
-        await ctx.reply({
+        await bot.api.sendMessageToChat({
           chat_id: userId,
           text: `👋 Напоминание
 
@@ -109,13 +85,7 @@ bot.api.setMyCommands([
   { name: 'start', description: 'Начать' }
 ]);
 
-// ===================== DEBUG (СМОТРИМ ВСЁ ЧТО ПРИХОДИТ) =====================
-bot.on('*', async (ctx) => {
-  console.log("🔥 RAW EVENT RECEIVED:");
-  console.log(JSON.stringify(ctx, null, 2));
-});
-
-// ===================== ОСНОВНАЯ ЛОГИКА =====================
+// ===================== ОБРАБОТКА =====================
 bot.on('message_created', async (ctx) => {
   const msg = ctx?.message;
   if (!msg) return;
@@ -125,19 +95,15 @@ bot.on('message_created', async (ctx) => {
 
   if (!userId || !text) return;
 
-  // ===================== START =====================
-  if (text.trim().startsWith('/start')) {
+  // ===== START =====
+  if (text === '/start') {
     users.set(userId, { stage: 'consent' });
 
     setReminder(userId);
 
-    return ctx.reply({
-      chat_id: userId,
-      text: `👋 Добро пожаловать!
+    return ctx.reply(`👋 Добро пожаловать!
 
 Я помогу подобрать недвижимость 🏠
-
-Перед началом:
 
 Продолжая, вы соглашаетесь с:
 
@@ -147,47 +113,44 @@ ${PRIVACY_LINK}
 📄 Обработкой персональных данных:
 ${PROCESSING_LINK}
 
-Нажмите /start чтобы продолжить.`
-    });
+Напишите "ок" чтобы продолжить`);
   }
 
   const user = users.get(userId);
   if (!user) return;
 
-  // ===================== ЦЕЛЬ =====================
+  // ===== CONSENT =====
+  if (user.stage === 'consent') {
+    user.stage = 'goal';
+
+    return ctx.reply('🏠 Какую недвижимость рассматриваете?');
+  }
+
+  // ===== GOAL =====
   if (user.stage === 'goal') {
     user.goal = text;
     user.stage = 'budget';
 
-    return ctx.reply({
-      chat_id: userId,
-      text: '💰 Какой бюджет рассматриваете?'
-    });
+    return ctx.reply('💰 Какой бюджет?');
   }
 
-  // ===================== БЮДЖЕТ =====================
+  // ===== BUDGET =====
   if (user.stage === 'budget') {
     user.budget = text;
     user.stage = 'name';
 
-    return ctx.reply({
-      chat_id: userId,
-      text: 'Как вас зовут?'
-    });
+    return ctx.reply('Как вас зовут?');
   }
 
-  // ===================== ИМЯ =====================
+  // ===== NAME =====
   if (user.stage === 'name') {
     user.name = text;
     user.stage = 'phone';
 
-    return ctx.reply({
-      chat_id: userId,
-      text: '📱 Оставьте номер телефона:'
-    });
+    return ctx.reply('📱 Оставьте номер телефона:');
   }
 
-  // ===================== ТЕЛЕФОН (ФИНАЛ) =====================
+  // ===== PHONE (ФИНАЛ) =====
   if (user.stage === 'phone') {
     user.phone = text;
     user.stage = 'done';
@@ -197,42 +160,64 @@ ${PROCESSING_LINK}
       reminders.delete(userId);
     }
 
-    const leadText =
-`🔥 НОВЫЙ ЛИД
+    const leadText = `🔥 НОВЫЙ ЛИД
 
 👤 ${user.name}
 📱 ${user.phone}
 💰 ${user.budget}
-🏠 ${user.goal}
-`;
+🏠 ${user.goal}`;
 
+    // менеджер
     if (MANAGER_ID) {
-      await ctx.reply({
+      await bot.api.sendMessageToChat({
         chat_id: MANAGER_ID,
         text: leadText
       });
     }
 
+    // группа
     if (GROUP_ID) {
-      await ctx.reply({
+      await bot.api.sendMessageToChat({
         chat_id: GROUP_ID,
         text: leadText
       });
     }
 
+    // таблица
     await saveToSheet(user);
 
-    return ctx.reply({
-      chat_id: userId,
-      text: `Спасибо! 🎉
+    return ctx.reply(`Спасибо! 🎉
 
 Мы уже подбираем варианты.
-С вами свяжется менеджер.`
-    });
+С вами свяжется менеджер.`);
   }
 });
 
-// ===================== START BOT =====================
-bot.start();
+// ===================== HTTP СЕРВЕР =====================
+const PORT = process.env.PORT || 10000;
+
+http.createServer((req, res) => {
+  let body = '';
+
+  req.on('data', chunk => {
+    body += chunk;
+  });
+
+  req.on('end', async () => {
+    try {
+      const update = JSON.parse(body);
+      console.log("🔥 WEBHOOK HIT:", JSON.stringify(update, null, 2));
+
+      await bot.handleUpdate(update);
+    } catch (e) {
+      console.log('Webhook error:', e);
+    }
+
+    res.writeHead(200);
+    res.end('OK');
+  });
+}).listen(PORT, () => {
+  console.log(`🌐 HTTP server running on ${PORT}`);
+});
 
 console.log('🚀 MAX BOT RUNNING');
