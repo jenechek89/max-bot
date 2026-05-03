@@ -205,6 +205,10 @@ http.createServer((req, res) => {
 
   req.on('end', async () => {
     try {
+    if (!body) {
+      res.writeHead(200);
+      return res.end('OK');
+    }
       const update = JSON.parse(body);
       console.log("🔥 WEBHOOK HIT:", JSON.stringify(update, null, 2));
 
