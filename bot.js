@@ -216,6 +216,17 @@ ${PROCESSING_LINK}`
   }
 });
 
+import http from 'http';
+
+const PORT = process.env.PORT || 10000;
+
+http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('OK');
+}).listen(PORT, () => {
+  console.log(`🌐 HTTP server running on ${PORT}`);
+});
+
 bot.start();
 
 console.log('🚀 MAX BOT RUNNING');
