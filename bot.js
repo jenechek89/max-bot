@@ -3,7 +3,7 @@ import { google } from 'googleapis';
 
 const bot = new Bot(process.env.BOT_TOKEN);
 
-// ===== НАСТРОЙКИ =====
+// ===================== НАСТРОЙКИ =====================
 const MANAGER_ID = process.env.MANAGER_ID;
 const GROUP_ID = process.env.GROUP_ID;
 
@@ -12,19 +12,25 @@ const PROCESSING_LINK = "https://disk.yandex.ru/i/your-processing";
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 
-// ===== ПАМЯТЬ =====
+// ===================== ПАМЯТЬ =====================
 const users = new Map();
-const REMINDERS = new Map();
+const reminders = new Map();
 
-// ===== GOOGLE SHEETS =====
-const auth = new google.auth.GoogleAuth({
-  credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS),
-  scopes: ['https://www.googleapis.com/auth/spreadsheets']
-});
+// ===================== GOOGLE SHEETS =====================
+let sheets = null;
 
-const sheets = google.sheets({ version: 'v4', auth });
+if (process.env.GOOGLE_CREDENTIALS && SPREADSHEET_ID) {
+  const auth = new google.auth.GoogleAuth({
+    credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS),
+    scopes: ['https://www.googleapis.com/auth/spreadsheets']
+  });
 
-async function saveToSheets(user) {
+  sheets = google.sheets({ version: 'v4', auth });
+}
+
+async function saveToSheet(user) {
+  if (!sheets) return;
+
   try {
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
@@ -33,21 +39,34 @@ async function saveToSheets(user) {
       requestBody: {
         values: [[
           new Date().toLocaleString(),
-          user.name,
-          user.phone,
-          user.budget,
-          user.goal
+          user.name || '',
+          user.phone || '',
+          user.budget || '',
+          user.goal || ''
         ]]
       }
     });
   } catch (e) {
-    console.log('Ошибка записи в таблицу', e);
+    console.log('Google Sheets error:', e);
   }
 }
 
-// ===== НАПОМИНАНИЕ 24Ч =====
+// ===================== УТИЛИТЫ =====================
+function getMessage(ctx) {
+  return ctx?.message || ctx?.update?.message;
+}
+
+function getUserId(msg) {
+  return msg?.sender?.user_id;
+}
+
+function getText(msg) {
+  return msg?.body?.text;
+}
+
+// ===================== НАПОМИНАНИЕ =====================
 function setReminder(userId) {
-  if (REMINDERS.has(userId)) return;
+  if (reminders.has(userId)) return;
 
   const timeout = setTimeout(async () => {
     const user = users.get(userId);
@@ -56,174 +75,147 @@ function setReminder(userId) {
       try {
         await bot.api.sendMessage({
           chat_id: userId,
-          text: `👋 Вы начали подбор недвижимости, но не завершили.
+          text: `👋 Напоминание
 
-Могу подобрать для вас лучшие варианты 🏠
-Нажмите /start и продолжим.`
+Вы начали подбор недвижимости, но не закончили.
+
+Нажмите /start чтобы продолжить.`
         });
       } catch (e) {
-        console.log('Ошибка напоминания', e);
+        console.log('Reminder error:', e);
       }
     }
 
-    REMINDERS.delete(userId);
+    reminders.delete(userId);
   }, 24 * 60 * 60 * 1000);
 
-  REMINDERS.set(userId, timeout);
+  reminders.set(userId, timeout);
 }
 
-// ===== КОМАНДЫ =====
+// ===================== КОМАНДЫ =====================
 bot.api.setMyCommands([
   { name: 'start', description: 'Начать' }
 ]);
 
-// ===== ПРИВЕТСТВИЕ =====
-bot.on('message', async (ctx) => {
-  const userId = ctx.user()?.user_id;
-  const text = ctx.text?.();
+// ===================== ВХОДЯЩИЕ СООБЩЕНИЯ =====================
+bot.on('message_created', async (ctx) => {
+  const msg = getMessage(ctx);
+  if (!msg) return;
 
-  if (!text) return;
+  const userId = getUserId(msg);
+  const text = getText(msg);
 
-  if (!users.has(userId) && text !== '/start') {
-    return ctx.reply(
-`👋 Привет!
+  if (!userId || !text) return;
 
-Я бот агентства недвижимости 🏠
+  // /start
+  if (text === '/start') {
+    users.set(userId, { stage: 'consent' });
 
-Помогу подобрать:
-• новостройки
-• вторичку
-• загородные дома
+    setReminder(userId);
 
-Чтобы начать — нажми /start`
-    );
-  }
-});
+    return bot.api.sendMessage({
+      chat_id: userId,
+      text:
+`👋 Добро пожаловать!
 
-// ===== /START → СОГЛАСИЕ =====
-bot.command('start', async (ctx) => {
-  const userId = ctx.user()?.user_id;
+Я помогу подобрать недвижимость 🏠
 
-  users.set(userId, { stage: 'consent' });
+Перед началом:
 
-  setReminder(userId);
+Продолжая, вы соглашаетесь с:
 
-  return ctx.reply(
-`Еще чуть-чуть и можем начинать:
-
-Продолжая, вы соглашаетесь с Политикой персональных данных:
+Политикой персональных данных:
 ${PRIVACY_LINK}
 
-и Обработкой персональных данных:
-${PROCESSING_LINK}`,
-{
-  inline_keyboard: [
-    [{ text: "✅ ПРОДОЛЖИТЬ", callback_data: "continue" }]
-  ]
-}
-  );
-});
-
-// ===== КНОПКА ПРОДОЛЖИТЬ =====
-bot.on('callback_query', async (ctx) => {
-  const userId = ctx.user()?.user_id;
-  const data = ctx.data();
-
-  if (data === 'continue') {
-    users.set(userId, { stage: 'goal' });
-
-    return ctx.reply(
-`Отлично 👍
-
-Что вас интересует?
-1 - Новостройки
-2 - Вторичка
-3 - Загородные дома`
-    );
+Обработкой персональных данных:
+${PROCESSING_LINK}`
+    });
   }
-});
-
-// ===== ОСНОВНАЯ ВОРОНКА =====
-bot.on('message', async (ctx) => {
-  const userId = ctx.user()?.user_id;
-  const text = ctx.text?.trim();
-
-  if (!users.has(userId) || !text) return;
 
   const user = users.get(userId);
+  if (!user) return;
 
-  // цель
+  // шаг 1 — цель
   if (user.stage === 'goal') {
     user.goal = text;
     user.stage = 'budget';
 
-    return ctx.reply('💰 Какой бюджет рассматриваешь?');
+    return bot.api.sendMessage({
+      chat_id: userId,
+      text: '💰 Какой бюджет рассматриваете?'
+    });
   }
 
-  // бюджет
+  // шаг 2 — бюджет
   if (user.stage === 'budget') {
     user.budget = text;
     user.stage = 'name';
 
-    return ctx.reply('Как тебя зовут?');
+    return bot.api.sendMessage({
+      chat_id: userId,
+      text: 'Как вас зовут?'
+    });
   }
 
-  // имя
+  // шаг 3 — имя
   if (user.stage === 'name') {
     user.name = text;
     user.stage = 'phone';
 
-    return ctx.reply('📱 Оставь номер телефона:');
+    return bot.api.sendMessage({
+      chat_id: userId,
+      text: '📱 Оставьте номер телефона:'
+    });
   }
 
-  // телефон → ФИНАЛ
+  // шаг 4 — телефон (ФИНАЛ)
   if (user.stage === 'phone') {
     user.phone = text;
     user.stage = 'done';
 
-    // отменяем напоминание
-    if (REMINDERS.has(userId)) {
-      clearTimeout(REMINDERS.get(userId));
-      REMINDERS.delete(userId);
+    if (reminders.has(userId)) {
+      clearTimeout(reminders.get(userId));
+      reminders.delete(userId);
     }
 
-    const lead =
+    const leadText =
 `🔥 НОВЫЙ ЛИД
 
-👤 Имя: ${user.name}
-📱 Телефон: ${user.phone}
-💰 Бюджет: ${user.budget}
-🏠 Интерес: ${user.goal}
+👤 ${user.name}
+📱 ${user.phone}
+💰 ${user.budget}
+🏠 ${user.goal}
 `;
 
-    // менеджеру
+    // менеджер
     if (MANAGER_ID) {
       await bot.api.sendMessage({
         chat_id: MANAGER_ID,
-        text: lead
+        text: leadText
       });
     }
 
-    // в группу
+    // группа
     if (GROUP_ID) {
       await bot.api.sendMessage({
         chat_id: GROUP_ID,
-        text: lead
+        text: leadText
       });
     }
 
-    // в таблицу
-    await saveToSheets(user);
+    // таблица
+    await saveToSheet(user);
 
-    return ctx.reply(
-`Спасибо! 🎉
+    return bot.api.sendMessage({
+      chat_id: userId,
+      text: `Спасибо! 🎉
 
 Мы уже подбираем варианты.
-С вами скоро свяжется менеджер.`
-    );
+С вами свяжется менеджер.`
+    });
   }
 });
 
 bot.start();
 
-console.log('🚀 FULL BOT WORKING');
+console.log('🚀 MAX BOT RUNNING');
