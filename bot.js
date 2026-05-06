@@ -109,66 +109,71 @@ bot.on('message_created', async (ctx) => {
       return ctx.reply('❌ Неверный формат телефона.\nПример: +79123456789 или 89123456789');
     }
 
-      // ===== PHONE (ФИНАЛ) =====
-      if (user.stage === 'phone') {
-          user.phone = text;
-          user.stage = 'done';
+        // ===== PHONE (ФИНАЛ) =====
+        if (user.stage === 'phone') {
+            user.phone = text;
+            user.stage = 'done';
 
-          if (reminders.has(userId)) {
-              clearTimeout(reminders.get(userId));
-              reminders.delete(userId);
-          }
+            if (reminders.has(userId)) {
+                clearTimeout(reminders.get(userId));
+                reminders.delete(userId);
+            }
 
-          const leadText = `🔥 НОВЫЙ ЛИД
+            const leadText = `🔥 НОВЫЙ ЛИД
 👤 ${user.name}
 📱 ${user.phone}
 💰 ${user.budget}
 🏠 ${user.goal}`;
 
-          // Отправка менеджеру
-          if (MANAGER_ID) {
-              await bot.api.sendMessageToChat({
-                  chat_id: MANAGER_ID,
-                  text: leadText
-              }).catch(e => console.log('Manager send error:', e));
-          }
+            // Отправка менеджеру
+            if (MANAGER_ID) {
+                await bot.api.sendMessageToChat({
+                    chat_id: MANAGER_ID,
+                    text: leadText
+                }).catch(e => console.log('Manager send error:', e));
+            }
 
-          // Отправка в группу
-          if (GROUP_ID) {
-              await bot.api.sendMessageToChat({
-                  chat_id: GROUP_ID,
-                  text: leadText
-              }).catch(e => console.log('Group send error:', e));
-          }
+            // Отправка в группу
+            if (GROUP_ID) {
+                await bot.api.sendMessageToChat({
+                    chat_id: GROUP_ID,
+                    text: leadText
+                }).catch(e => console.log('Group send error:', e));
+            }
 
-          await saveToSheet(user);
+            await saveToSheet(user);
 
-          return ctx.reply(`Спасибо! 🎉
+            return ctx.reply(`Спасибо! 🎉
 Мы уже подбираем варианты.
 С вами свяжется менеджер в ближайшее время.
 
 Напишите /start, чтобы начать заново.`);
-      }
+        }
+    }
 });
 
-// Webhook
+// ===================== WEBHOOK =====================
 const PORT = process.env.PORT || 10000;
+
 http.createServer((req, res) => {
-  if (req.method === 'POST' && req.url === '/webhook') {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', async () => {
-      try {
-        if (body) await bot.handleUpdate(JSON.parse(body));
-        res.writeHead(200).end('ok');
-      } catch (e) {
-        console.error(e);
-        res.writeHead(200).end('error');
-      }
-    });
-  } else {
-    res.writeHead(200).end('OK');
-  }
+    if (req.method === 'POST' && req.url === '/webhook') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', async () => {
+            try {
+                if (body) {
+                    const update = JSON.parse(body);
+                    await bot.handleUpdate(update);
+                }
+                res.writeHead(200).end('ok');
+            } catch (e) {
+                console.error('Webhook error:', e);
+                res.writeHead(200).end('error');
+            }
+        });
+    } else {
+        res.writeHead(200).end('OK');
+    }
 }).listen(PORT);
 
-console.log('🚀 Бот запущен');
+console.log('🚀 MAX BOT RUNNING');
