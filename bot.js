@@ -1,4 +1,4 @@
-import { Bot, Keyboard } from '@maxhub/max-bot-api';
+import { Bot } from '@maxhub/max-bot-api';
 import { google } from 'googleapis';
 import http from 'http';
 
@@ -12,7 +12,6 @@ const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 
 const users = new Map();
 
-// ===================== GOOGLE SHEETS =====================
 let sheets = null;
 if (process.env.GOOGLE_CREDENTIALS && SPREADSHEET_ID) {
   try {
@@ -24,6 +23,27 @@ if (process.env.GOOGLE_CREDENTIALS && SPREADSHEET_ID) {
   } catch (e) {}
 }
 
+async function saveToSheet(user) {
+  if (!sheets) return;
+  try {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID,
+      range: 'Лиды!A:F',
+      valueInputOption: 'RAW',
+      requestBody: {
+        values: [[
+          new Date().toLocaleString('ru-RU'),
+          user.name,
+          user.phone,
+          user.real_estate_type,
+          user.payment_type,
+          user.budget
+        ]]
+      }
+    });
+  } catch (e) { console.error(e); }
+}
+
 // ===================== bot_started =====================
 bot.on('bot_started', async (ctx) => {
   const userId = ctx.user?.user_id;
@@ -31,55 +51,84 @@ bot.on('bot_started', async (ctx) => {
 
   users.set(userId, { stage: 'consent' });
 
-  await ctx.reply(`👋 Добро пожаловать!\nЯ помогу подобрать недвижимость 🏠\n\nПродолжая, вы соглашаетесь с обработкой данных.`);
-
-  const keyboard = Keyboard.inlineKeyboard([
-    [Keyboard.button.callback('✅ Согласен', 'consent_yes')],
-    [Keyboard.button.callback('❌ Не согласен', 'consent_no')]
-  ]);
-
-  await ctx.reply('Пожалуйста, подтвердите согласие:', { attachments: [keyboard] });
+  await ctx.reply(`👋 Добро пожаловать!\nЯ помогу подобрать недвижимость 🏠\n\n` +
+    `Продолжая, вы соглашаетесь с:\n` +
+    `📄 Политикой: ${PRIVACY_LINK}\n` +
+    `📄 Обработкой ПД: ${PROCESSING_LINK}\n\n` +
+    `Напишите "Согласен", чтобы продолжить.`);
 });
 
-// ===================== ВАЖНО: ВСЕ ВОЗМОЖНЫЕ СОБЫТИЯ =====================
-bot.on('message_callback', async (ctx) => {
-  console.log('📌 message_callback сработал!', ctx);
-  handleCallback(ctx);
-});
-
-bot.on('callback_query', async (ctx) => {
-  console.log('📌 callback_query сработал!', ctx);
-  handleCallback(ctx);
-});
-
-async function handleCallback(ctx) {
-  const data = ctx.data || ctx.callbackQuery?.data;
-  const userId = ctx.from?.user_id || ctx.callbackQuery?.from?.user_id;
-
-  console.log(`✅ Callback data: ${data} | userId: ${userId}`);
-
-  if (!data || !userId) return;
+bot.on('message_created', async (ctx) => {
+  const userId = ctx.message?.sender?.user_id;
+  const text = (ctx.message?.body?.text || '').trim();
+  if (!userId || !text) return;
 
   let user = users.get(userId);
-  if (!user) return;
+  if (!user) user = { stage: 'consent' };
+  users.set(userId, user);
 
-  if (data === 'consent_yes') {
-    user.stage = 'real_estate';
-    const k = Keyboard.inlineKeyboard([
-      [Keyboard.button.callback('Новостройка', 'type_new')],
-      [Keyboard.button.callback('Вторичка', 'type_secondary')],
-      [Keyboard.button.callback('Загородный дом', 'type_house')],
-      [Keyboard.button.callback('Другое', 'type_other')]
-    ]);
-    await ctx.reply('🏠 Какую недвижимость вы ищете?', { attachments: [k] });
+  if (user.stage === 'consent') {
+    if (text.toLowerCase().includes('согласен') || text.toLowerCase() === 'ок') {
+      user.stage = 'real_estate';
+      return ctx.reply(`🏠 Какую недвижимость вы ищете?\n\nНапишите один из вариантов:\n• Новостройка\n• Вторичка\n• Загородный дом\n• Другое`);
+    } else {
+      return ctx.reply('Для продолжения напишите "Согласен".');
+    }
   }
 
-  if (data === 'consent_no') {
-    await ctx.reply('Вы отказались от согласия. Напишите /start, если передумаете.');
+  if (user.stage === 'real_estate') {
+    user.real_estate_type = text;
+    user.stage = 'payment';
+    return ctx.reply(`Вы выбрали: ${text}\n\n💳 Какой способ оплаты рассматриваете?\nНапишите: Наличные, Ипотека, Сертификаты/Мат.капитал или Другое`);
   }
-}
 
-// ===================== WEBHOOK =====================
+  if (user.stage === 'payment') {
+    user.payment_type = text;
+    user.stage = 'budget';
+    return ctx.reply(`Вы ищете ${user.real_estate_type} за ${text}\n\n💰 В какую сумму рассчитываете покупку?\nНапишите, например: 3-5 млн, 5-9 млн, более 9 млн`);
+  }
+
+  if (user.stage === 'budget') {
+    user.budget = text;
+    user.stage = 'name';
+    return ctx.reply('Напишите ваше имя (только буквы и тире):');
+  }
+
+  if (user.stage === 'name') {
+    if (!/^[А-Яа-яЁёA-Za-z\s-]+$/u.test(text) || text.length < 2) {
+      return ctx.reply('❌ Имя должно содержать только буквы и тире. Попробуйте ещё раз.');
+    }
+    user.name = text;
+    user.stage = 'phone';
+    return ctx.reply('📱 Введите номер телефона (+79xxxxxxxxx или 89xxxxxxxxx):');
+  }
+
+  if (user.stage === 'phone') {
+    const clean = text.replace(/[^+0-9]/g, '');
+    if (!(/^(\+7|8)\d{10}$/.test(clean))) {
+      return ctx.reply('❌ Неверный формат телефона.\nПример: +79123456789 или 89123456789');
+    }
+
+    user.phone = clean;
+    user.stage = 'done';
+
+    const leadText = `🔥 НОВЫЙ ЛИД\n👤 ${user.name}\n📱 ${user.phone}\n🏠 ${user.real_estate_type}\n💳 ${user.payment_type}\n💰 ${user.budget}`;
+
+    if (MANAGER_ID) await bot.api.sendMessage({ chat_id: MANAGER_ID, text: leadText });
+    if (GROUP_ID) await bot.api.sendMessage({ chat_id: GROUP_ID, text: leadText });
+    await saveToSheet(user);
+
+    await ctx.reply(`✅ Спасибо, ${user.name}!\nНаш специалист свяжется с вами в ближайшее время.\n\nВсего хорошего!`);
+    users.delete(userId);
+  }
+
+  if (text === '/start') {
+    users.set(userId, { stage: 'consent' });
+    await ctx.reply('Начинаем заново 👇\nНапишите "Согласен", чтобы продолжить.');
+  }
+});
+
+// Webhook
 const PORT = process.env.PORT || 10000;
 http.createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/webhook') {
@@ -87,13 +136,10 @@ http.createServer((req, res) => {
     req.on('data', chunk => body += chunk);
     req.on('end', async () => {
       try {
-        if (body) {
-          const update = JSON.parse(body);
-          await bot.handleUpdate(update);
-        }
+        if (body) await bot.handleUpdate(JSON.parse(body));
         res.writeHead(200).end('ok');
       } catch (e) {
-        console.error('Webhook error:', e);
+        console.error(e);
         res.writeHead(200).end('error');
       }
     });
