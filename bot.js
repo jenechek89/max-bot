@@ -11,6 +11,7 @@ const PRIVACY_LINK = "https://disk.yandex.ru/i/your-privacy";
 const PROCESSING_LINK = "https://disk.yandex.ru/i/your-processing";
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 
+// ===================== ПАМЯТЬ =====================
 const users = new Map();
 const reminders = new Map();
 
@@ -23,7 +24,9 @@ if (process.env.GOOGLE_CREDENTIALS && SPREADSHEET_ID) {
             scopes: ['https://www.googleapis.com/auth/spreadsheets']
         });
         sheets = google.sheets({ version: 'v4', auth });
-    } catch (e) { }
+    } catch (e) {
+        console.error('Google Sheets error:', e);
+    }
 }
 
 async function saveToSheet(user) {
@@ -34,10 +37,19 @@ async function saveToSheet(user) {
             range: 'Лиды!A:F',
             valueInputOption: 'RAW',
             requestBody: {
-                values: [[new Date().toLocaleString('ru-RU'), user.name, user.phone, user.real_estate_type, user.payment_type, user.budget]]
+                values: [[
+                    new Date().toLocaleString('ru-RU'),
+                    user.name || '',
+                    user.phone || '',
+                    user.real_estate_type || '',
+                    user.payment_type || '',
+                    user.budget || ''
+                ]]
             }
         });
-    } catch (e) { }
+    } catch (e) {
+        console.error('Sheets error:', e);
+    }
 }
 
 // ===================== НАПОМИНАНИЕ =====================
@@ -50,14 +62,14 @@ function setReminder(userId) {
             try {
                 await bot.api.sendMessageToChat({
                     chat_id: userId,
-                    text: `👋 Напоминание!\n\nВы начали подбор недвижимости, но не закончили.\n\nНапишите /start, чтобы продолжить.`
+                    text: `👋 Напоминание!\n\nВы начали подбор недвижимости, но не закончили.\nНапишите /start, чтобы продолжить.`
                 });
             } catch (e) {
                 console.log('Reminder error:', e);
             }
         }
         reminders.delete(userId);
-    }, 24 * 60 * 60 * 1000); // 24 часа
+    }, 24 * 60 * 60 * 1000);
 
     reminders.set(userId, timeout);
 }
@@ -68,14 +80,12 @@ bot.on('bot_started', async (ctx) => {
     if (!userId) return;
 
     users.set(userId, { stage: 'consent' });
+    setReminder(userId);
 
-    await ctx.reply(`👋 Добро пожаловать!\nЯ помогу подобрать недвижимость 🏠\n\n` +
-        `Продолжая, вы соглашаетесь с:\n` +
-        `📄 Политикой: ${PRIVACY_LINK}\n` +
-        `📄 Обработкой ПД: ${PROCESSING_LINK}\n\n` +
-        `Напишите "Согласен", чтобы начать.`);
+    await ctx.reply(`👋 Добро пожаловать!\nЯ помогу подобрать недвижимость 🏠\n\nПродолжая, вы соглашаетесь с обработкой данных.\n\nНапишите "Согласен", чтобы начать.`);
 });
 
+// ===================== MAIN LOGIC =====================
 bot.on('message_created', async (ctx) => {
     const userId = ctx.message?.sender?.user_id;
     const text = (ctx.message?.body?.text || '').trim();
@@ -87,53 +97,44 @@ bot.on('message_created', async (ctx) => {
 
     if (text === '/start') {
         users.set(userId, { stage: 'consent' });
-        setReminder(userId)
+        setReminder(userId);
         return ctx.reply(`👋 Добро пожаловать!\nНапишите "Согласен", чтобы начать.`);
     }
 
-    // 1. Согласие
     if (user.stage === 'consent') {
         if (text.toLowerCase().includes('согласен') || text.toLowerCase() === 'ок') {
             user.stage = 'real_estate';
-            setReminder(userId)
-            return ctx.reply(`🏠 Какую недвижимость вы ищете?\n\nНапишите один из вариантов:\n• Новостройка\n• Вторичка\n• Загородный дом\n• Другое`);
+            setReminder(userId);
+            return ctx.reply(`🏠 Какую недвижимость вы ищете?\n\nНапишите: Новостройка, Вторичка, Загородный дом или Другое`);
         } else {
             return ctx.reply('Для продолжения напишите "Согласен".');
         }
     }
 
-    // 2. Тип недвижимости
     if (user.stage === 'real_estate') {
         user.real_estate_type = text;
         user.stage = 'payment';
-        return ctx.reply(`Вы выбрали: ${text}\n\n💳 Какой способ оплаты рассматриваете?\nНапишите:\n• Наличные\n• Ипотека\n• Сертификаты / Мат.капитал\n• Другое`);
+        return ctx.reply(`Вы выбрали: ${text}\n\n💳 Какой способ оплаты рассматриваете?`);
     }
 
-    // 3. Способ оплаты
     if (user.stage === 'payment') {
         user.payment_type = text;
         user.stage = 'budget';
-        return ctx.reply(`Вы ищете ${user.real_estate_type} за ${text}\n\n💰 В какую сумму рассчитываете покупку?\nНапишите, например:\n• 3-5 млн\n• 5-9 млн\n• Более 9 млн`);
+        return ctx.reply(`Вы ищете ${user.real_estate_type} за ${text}\n\n💰 В какую сумму рассчитываете покупку?`);
     }
 
-    // 4. Бюджет
     if (user.stage === 'budget') {
         user.budget = text;
         user.stage = 'name';
-        return ctx.reply('Напишите ваше имя (только буквы и тире):');
+        return ctx.reply('Напишите ваше имя (только буквы):');
     }
 
-    // 5. Имя
     if (user.stage === 'name') {
-        if (!/^[А-Яа-яЁёA-Za-z\s-]+$/u.test(text) || text.length < 2) {
-            return ctx.reply('❌ Имя должно содержать только буквы и тире.\nПопробуйте ещё раз.');
-        }
         user.name = text;
         user.stage = 'phone';
-        return ctx.reply('📱 Введите номер телефона в формате:\n+79123456789 или 89123456789');
+        return ctx.reply('📱 Укажите номер телефона:');
     }
 
-    // 6. Телефон + Завершение
     if (user.stage === 'phone') {
         user.phone = text;
         user.stage = 'done';
@@ -143,36 +144,15 @@ bot.on('message_created', async (ctx) => {
             reminders.delete(userId);
         }
 
-        const leadText = `🔥 НОВЫЙ ЛИД
-👤 ${user.name}
-📱 ${user.phone}
-💰 ${user.budget}
-🏠 ${user.goal}`;
+        const leadText = `🔥 НОВЫЙ ЛИД\n👤 ${user.name}\n📱 ${user.phone}\n🏠 ${user.real_estate_type}\n💳 ${user.payment_type}\n💰 ${user.budget}`;
 
-        // Отправка менеджеру
-        if (MANAGER_ID) {
-            await bot.api.sendMessageToChat({
-                chat_id: MANAGER_ID,
-                text: leadText
-            }).catch(e => console.log('Manager error:', e));
-        }
-
-        // Отправка в группу
-        if (GROUP_ID) {
-            console.log(`Попытка отправки в группу ${GROUP_ID}`);
-            await bot.api.sendMessageToChat({
-                chat_id: GROUP_ID,
-                text: leadText
-            })
-                .then(() => console.log('✅ Лид отправлен в группу'))
-                .catch(e => console.error('❌ Ошибка отправки в группу:', e));
-        }
+        if (MANAGER_ID) await bot.api.sendMessageToChat({ chat_id: MANAGER_ID, text: leadText }).catch(() => { });
+        if (GROUP_ID) await bot.api.sendMessageToChat({ chat_id: GROUP_ID, text: leadText }).catch(() => { });
 
         await saveToSheet(user);
 
-        return ctx.reply(`✅ Спасибо, ${user.name}!\nНаш специалист свяжется с вами в ближайшее время.\n\nВсего хорошего!\n\nНапишите /start для нового обращения.`);
+        return ctx.reply(`✅ Спасибо!\nНаш специалист свяжется с вами в ближайшее время.\n\nНапишите /start, чтобы начать заново.`);
     }
-}   // ← Закрывающая скобка message_created
 });
 
 // ===================== WEBHOOK =====================
@@ -184,10 +164,7 @@ http.createServer((req, res) => {
         req.on('data', chunk => body += chunk);
         req.on('end', async () => {
             try {
-                if (body) {
-                    const update = JSON.parse(body);
-                    await bot.handleUpdate(update);
-                }
+                if (body) await bot.handleUpdate(JSON.parse(body));
                 res.writeHead(200).end('ok');
             } catch (e) {
                 console.error('Webhook error:', e);
