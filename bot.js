@@ -118,32 +118,38 @@ bot.on('message_created', async (ctx) => {
         user.phone = cleanPhone;
         user.stage = 'done';
 
-        const leadText = `🔥 НОВЫЙ ЛИД\n` +
-            `👤 Имя: ${user.name}\n` +
-            `📱 Телефон: ${user.phone}\n` +
-            `🏠 Тип: ${user.real_estate_type || '-'}\n` +
-            `💳 Оплата: ${user.payment_type || '-'}\n` +
-            `💰 Бюджет: ${user.budget || '-'}`;
+        // === ИСПРАВЛЕННЫЙ LEADTEXT ===
+        const leadText = `🔥 НОВЫЙ ЛИД
+👤 Имя: ${user.name || '-'}
+📱 Телефон: ${user.phone || '-'}
+🏠 Тип: ${user.real_estate_type || '-'}
+💳 Оплата: ${user.payment_type || '-'}
+💰 Бюджет: ${user.budget || '-'}`;
+
+        console.log("Отправляемый текст:", leadText); // для отладки
 
         // Отправка менеджеру
         if (MANAGER_ID) {
-            await bot.api.sendMessageToChat({ chat_id: MANAGER_ID, text: leadText })
-                .catch(e => console.error('Ошибка отправки менеджеру:', e));
+            await bot.api.sendMessageToChat({
+                chat_id: MANAGER_ID,
+                text: leadText
+            }).catch(e => console.error('Manager error:', e));
         }
 
         // Отправка в группу
         if (GROUP_ID) {
-            console.log(`Попытка отправки в группу. GROUP_ID = ${GROUP_ID}`);
-            await bot.api.sendMessageToChat({ chat_id: GROUP_ID, text: leadText })
-                .then(() => console.log('✅ Лид успешно отправлен в группу'))
+            console.log(`Попытка отправки в группу: ${GROUP_ID}`);
+            await bot.api.sendMessageToChat({
+                chat_id: GROUP_ID,
+                text: leadText
+            })
+                .then(() => console.log('✅ Успешно отправлено в группу'))
                 .catch(e => console.error('❌ Ошибка отправки в группу:', e));
-        } else {
-            console.log('⚠️ GROUP_ID не задан в переменных окружения');
         }
 
         await saveToSheet(user);
 
-        return ctx.reply(`✅ Спасибо, ${user.name}!\nНаш специалист свяжется с вами в ближайшее время.\n\nВсего хорошего!\n\nНапишите /start, если хотите начать заново.`);
+        return ctx.reply(`✅ Спасибо, ${user.name}!\nНаш специалист свяжется с вами в ближайшее время.\n\nВсего хорошего!\n\nНапишите /start, чтобы начать заново.`);
     }
 });
 
