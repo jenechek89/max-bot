@@ -4,151 +4,149 @@ import http from 'http';
 
 const bot = new Bot(process.env.BOT_TOKEN);
 
+// ===================== НАСТРОЙКИ =====================
 const MANAGER_ID = process.env.MANAGER_ID;
 const GROUP_ID = process.env.GROUP_ID;
 const PRIVACY_LINK = "https://disk.yandex.ru/i/your-privacy";
 const PROCESSING_LINK = "https://disk.yandex.ru/i/your-processing";
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 
+// ===================== ПАМЯТЬ =====================
 const users = new Map();
+const reminders = new Map();   // ← Добавили эту строку
 
+// ===================== GOOGLE SHEETS =====================
 let sheets = null;
 if (process.env.GOOGLE_CREDENTIALS && SPREADSHEET_ID) {
-  try {
-    const auth = new google.auth.GoogleAuth({
-      credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS),
-      scopes: ['https://www.googleapis.com/auth/spreadsheets']
-    });
-    sheets = google.sheets({ version: 'v4', auth });
-  } catch (e) {}
+    try {
+        const auth = new google.auth.GoogleAuth({
+            credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS),
+            scopes: ['https://www.googleapis.com/auth/spreadsheets']
+        });
+        sheets = google.sheets({ version: 'v4', auth });
+    } catch (e) {
+        console.error('Google Sheets error:', e);
+    }
 }
 
 async function saveToSheet(user) {
-  if (!sheets) return;
-  try {
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_ID,
-      range: 'Лиды!A:F',
-      valueInputOption: 'RAW',
-      requestBody: {
-        values: [[
-          new Date().toLocaleString('ru-RU'),
-          user.name,
-          user.phone,
-          user.real_estate_type,
-          user.payment_type,
-          user.budget
-        ]]
-      }
-    });
-  } catch (e) { console.error(e); }
+    if (!sheets) return;
+    try {
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: SPREADSHEET_ID,
+            range: 'Лиды!A:E',
+            valueInputOption: 'RAW',
+            requestBody: {
+                values: [[
+                    new Date().toLocaleString('ru-RU'),
+                    user.name || '',
+                    user.phone || '',
+                    user.budget || '',
+                    user.goal || ''
+                ]]
+            }
+        });
+    } catch (e) {
+        console.error('Sheets error:', e);
+    }
+}
+
+// ===================== НАПОМИНАНИЕ =====================
+function setReminder(userId) {
+    if (reminders.has(userId)) return;
+
+    const timeout = setTimeout(async () => {
+        const user = users.get(userId);
+        if (user && user.stage !== 'done') {
+            await bot.api.sendMessageToChat({
+                chat_id: userId,
+                text: `👋 Напоминание!\nВы начали подбор недвижимости, но не закончили.\nНапишите /start чтобы продолжить.`
+            }).catch(() => { });
+        }
+        reminders.delete(userId);
+    }, 24 * 60 * 60 * 1000);
+
+    reminders.set(userId, timeout);
 }
 
 // ===================== bot_started =====================
 bot.on('bot_started', async (ctx) => {
-  const userId = ctx.user?.user_id;
-  if (!userId) return;
+    const userId = ctx.user?.user_id;
+    if (!userId) return;
 
-  users.set(userId, { stage: 'consent' });
+    users.set(userId, { stage: 'consent' });
+    setReminder(userId);
 
-  await ctx.reply(`👋 Добро пожаловать!\nЯ помогу подобрать недвижимость 🏠\n\n` +
-    `Продолжая, вы соглашаетесь с:\n` +
-    `📄 Политикой: ${PRIVACY_LINK}\n` +
-    `📄 Обработкой ПД: ${PROCESSING_LINK}\n\n` +
-    `Напишите "Согласен", чтобы продолжить.`);
+    await ctx.reply(`👋 Добро пожаловать!\nЯ помогу подобрать недвижимость 🏠\n\n` +
+        `Продолжая, вы соглашаетесь с:\n` +
+        `📄 Политикой: ${PRIVACY_LINK}\n` +
+        `📄 Обработкой ПД: ${PROCESSING_LINK}\n\n` +
+        `Напишите "Согласен", чтобы начать.`);
 });
 
+// ===================== ОСНОВНАЯ ЛОГИКА =====================
 bot.on('message_created', async (ctx) => {
-  const userId = ctx.message?.sender?.user_id;
-  const text = (ctx.message?.body?.text || '').trim();
-  if (!userId || !text) return;
+    const userId = ctx.message?.sender?.user_id;
+    const text = (ctx.message?.body?.text || '').trim();
+    if (!userId || !text) return;
 
-  let user = users.get(userId);
-  if (!user) user = { stage: 'consent' };
-  users.set(userId, user);
+    let user = users.get(userId);
+    if (!user) user = { stage: 'consent' };
+    users.set(userId, user);
 
-  if (user.stage === 'consent') {
-    if (text.toLowerCase().includes('согласен') || text.toLowerCase() === 'ок') {
-      user.stage = 'real_estate';
-      return ctx.reply(`🏠 Какую недвижимость вы ищете?\n\nНапишите один из вариантов:\n• Новостройка\n• Вторичка\n• Загородный дом\n• Другое`);
-    } else {
-      return ctx.reply('Для продолжения напишите "Согласен".');
-    }
-  }
-
-  if (user.stage === 'real_estate') {
-    user.real_estate_type = text;
-    user.stage = 'payment';
-    return ctx.reply(`Вы выбрали: ${text}\n\n💳 Какой способ оплаты рассматриваете?\nНапишите: Наличные, Ипотека, Сертификаты/Мат.капитал или Другое`);
-  }
-
-  if (user.stage === 'payment') {
-    user.payment_type = text;
-    user.stage = 'budget';
-    return ctx.reply(`Вы ищете ${user.real_estate_type} за ${text}\n\n💰 В какую сумму рассчитываете покупку?\nНапишите, например: 3-5 млн, 5-9 млн, более 9 млн`);
-  }
-
-  if (user.stage === 'budget') {
-    user.budget = text;
-    user.stage = 'name';
-    return ctx.reply('Напишите ваше имя (только буквы и тире):');
-  }
-
-  if (user.stage === 'name') {
-    if (!/^[А-Яа-яЁёA-Za-z\s-]+$/u.test(text) || text.length < 2) {
-      return ctx.reply('❌ Имя должно содержать только буквы и тире. Попробуйте ещё раз.');
-    }
-    user.name = text;
-    user.stage = 'phone';
-    return ctx.reply('📱 Введите номер телефона (+79xxxxxxxxx или 89xxxxxxxxx):');
-  }
-
-  if (user.stage === 'phone') {
-    const clean = text.replace(/[^+0-9]/g, '');
-    if (!(/^(\+7|8)\d{10}$/.test(clean))) {
-      return ctx.reply('❌ Неверный формат телефона.\nПример: +79123456789 или 89123456789');
+    if (text === '/start') {
+        users.set(userId, { stage: 'consent' });
+        setReminder(userId);
+        return ctx.reply(`👋 Добро пожаловать!\nНапишите "Согласен", чтобы продолжить.`);
     }
 
-        // ===== PHONE (ФИНАЛ) =====
-        if (user.stage === 'phone') {
-            user.phone = text;
-            user.stage = 'done';
-
-            if (reminders.has(userId)) {
-                clearTimeout(reminders.get(userId));
-                reminders.delete(userId);
-            }
-
-            const leadText = `🔥 НОВЫЙ ЛИД
-👤 ${user.name}
-📱 ${user.phone}
-💰 ${user.budget}
-🏠 ${user.goal}`;
-
-            // Отправка менеджеру
-            if (MANAGER_ID) {
-                await bot.api.sendMessageToChat({
-                    chat_id: MANAGER_ID,
-                    text: leadText
-                }).catch(e => console.log('Manager send error:', e));
-            }
-
-            // Отправка в группу
-            if (GROUP_ID) {
-                await bot.api.sendMessageToChat({
-                    chat_id: GROUP_ID,
-                    text: leadText
-                }).catch(e => console.log('Group send error:', e));
-            }
-
-            await saveToSheet(user);
-
-            return ctx.reply(`Спасибо! 🎉
-Мы уже подбираем варианты.
-С вами свяжется менеджер в ближайшее время.
-
-Напишите /start, чтобы начать заново.`);
+    if (user.stage === 'consent') {
+        if (text.toLowerCase().includes('согласен') || text.toLowerCase() === 'ок') {
+            user.stage = 'goal';
+            return ctx.reply('🏠 Какую недвижимость вы рассматриваете?');
         }
+        return;
+    }
+
+    if (user.stage === 'goal') {
+        user.goal = text;
+        user.stage = 'budget';
+        return ctx.reply('💰 Какой бюджет рассматриваете?');
+    }
+
+    if (user.stage === 'budget') {
+        user.budget = text;
+        user.stage = 'name';
+        return ctx.reply('Как вас зовут?');
+    }
+
+    if (user.stage === 'name') {
+        user.name = text;
+        user.stage = 'phone';
+        return ctx.reply('📱 Укажите номер телефона:');
+    }
+
+    if (user.stage === 'phone') {
+        user.phone = text;
+        user.stage = 'done';
+
+        if (reminders.has(userId)) {
+            clearTimeout(reminders.get(userId));
+            reminders.delete(userId);
+        }
+
+        const leadText = `🔥 НОВЫЙ ЛИД\n👤 ${user.name}\n📱 ${user.phone}\n💰 ${user.budget}\n🏠 ${user.goal}`;
+
+        if (MANAGER_ID) {
+            await bot.api.sendMessageToChat({ chat_id: MANAGER_ID, text: leadText }).catch(() => { });
+        }
+        if (GROUP_ID) {
+            await bot.api.sendMessageToChat({ chat_id: GROUP_ID, text: leadText }).catch(() => { });
+        }
+
+        await saveToSheet(user);
+
+        return ctx.reply(`Спасибо! 🎉\nМы уже подбираем варианты.\nС вами свяжется менеджер.\n\nНапишите /start, чтобы начать заново.`);
     }
 });
 
@@ -161,10 +159,7 @@ http.createServer((req, res) => {
         req.on('data', chunk => body += chunk);
         req.on('end', async () => {
             try {
-                if (body) {
-                    const update = JSON.parse(body);
-                    await bot.handleUpdate(update);
-                }
+                if (body) await bot.handleUpdate(JSON.parse(body));
                 res.writeHead(200).end('ok');
             } catch (e) {
                 console.error('Webhook error:', e);
