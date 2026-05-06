@@ -118,38 +118,32 @@ bot.on('message_created', async (ctx) => {
         user.phone = cleanPhone;
         user.stage = 'done';
 
-        // === ИСПРАВЛЕННЫЙ LEADTEXT ===
         const leadText = `🔥 НОВЫЙ ЛИД
 👤 Имя: ${user.name || '-'}
-📱 Телефон: ${user.phone || '-'}
+📱 Телефон: ${user.phone}
 🏠 Тип: ${user.real_estate_type || '-'}
 💳 Оплата: ${user.payment_type || '-'}
 💰 Бюджет: ${user.budget || '-'}`;
 
-        console.log("Отправляемый текст:", leadText); // для отладки
+        console.log("Отправляемый текст в группу:", leadText);
 
         // Отправка менеджеру
         if (MANAGER_ID) {
-            await bot.api.sendMessageToChat({
-                chat_id: MANAGER_ID,
-                text: leadText
-            }).catch(e => console.error('Manager error:', e));
+            await bot.api.sendMessageToChat(MANAGER_ID, leadText)
+                .catch(e => console.error('Manager error:', e));
         }
 
         // Отправка в группу
         if (GROUP_ID) {
-            console.log(`Попытка отправки в группу: ${GROUP_ID}`);
-            await bot.api.sendMessageToChat({
-                chat_id: GROUP_ID,
-                text: leadText
-            })
-                .then(() => console.log('✅ Успешно отправлено в группу'))
+            console.log(`Попытка отправки в группу ${GROUP_ID}`);
+            await bot.api.sendMessageToChat(GROUP_ID, leadText)
+                .then(() => console.log('✅ Лид отправлен в группу'))
                 .catch(e => console.error('❌ Ошибка отправки в группу:', e));
         }
 
         await saveToSheet(user);
 
-        return ctx.reply(`✅ Спасибо, ${user.name}!\nНаш специалист свяжется с вами в ближайшее время.\n\nВсего хорошего!\n\nНапишите /start, чтобы начать заново.`);
+        return ctx.reply(`✅ Спасибо, ${user.name}!\nНаш специалист свяжется с вами в ближайшее время.\n\nВсего хорошего!\n\nНапишите /start для нового обращения.`);
     }
 });
 
