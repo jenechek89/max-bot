@@ -13,7 +13,7 @@ const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 
 // ===================== ПАМЯТЬ =====================
 const users = new Map();
-const reminders = new Map();   // ← Добавили эту строку
+const reminders = new Map();
 
 // ===================== GOOGLE SHEETS =====================
 let sheets = null;
@@ -37,36 +37,12 @@ async function saveToSheet(user) {
             range: 'Лиды!A:E',
             valueInputOption: 'RAW',
             requestBody: {
-                values: [[
-                    new Date().toLocaleString('ru-RU'),
-                    user.name || '',
-                    user.phone || '',
-                    user.budget || '',
-                    user.goal || ''
-                ]]
+                values: [[new Date().toLocaleString('ru-RU'), user.name || '', user.phone || '', user.budget || '', user.goal || '']]
             }
         });
     } catch (e) {
         console.error('Sheets error:', e);
     }
-}
-
-// ===================== НАПОМИНАНИЕ =====================
-function setReminder(userId) {
-    if (reminders.has(userId)) return;
-
-    const timeout = setTimeout(async () => {
-        const user = users.get(userId);
-        if (user && user.stage !== 'done') {
-            await bot.api.sendMessageToChat({
-                chat_id: userId,
-                text: `👋 Напоминание!\nВы начали подбор недвижимости, но не закончили.\nНапишите /start чтобы продолжить.`
-            }).catch(() => { });
-        }
-        reminders.delete(userId);
-    }, 24 * 60 * 60 * 1000);
-
-    reminders.set(userId, timeout);
 }
 
 // ===================== bot_started =====================
@@ -75,7 +51,6 @@ bot.on('bot_started', async (ctx) => {
     if (!userId) return;
 
     users.set(userId, { stage: 'consent' });
-    setReminder(userId);
 
     await ctx.reply(`👋 Добро пожаловать!\nЯ помогу подобрать недвижимость 🏠\n\n` +
         `Продолжая, вы соглашаетесь с:\n` +
@@ -91,23 +66,28 @@ bot.on('message_created', async (ctx) => {
     if (!userId || !text) return;
 
     let user = users.get(userId);
-    if (!user) user = { stage: 'consent' };
-    users.set(userId, user);
-
-    if (text === '/start') {
-        users.set(userId, { stage: 'consent' });
-        setReminder(userId);
-        return ctx.reply(`👋 Добро пожаловать!\nНапишите "Согласен", чтобы продолжить.`);
+    if (!user) {
+        user = { stage: 'consent' };
+        users.set(userId, user);
     }
 
+    // Перезапуск
+    if (text === '/start') {
+        users.set(userId, { stage: 'consent' });
+        return ctx.reply(`👋 Добро пожаловать!\nНапишите "Согласен", чтобы начать.`);
+    }
+
+    // ==================== СОГЛАСИЕ ====================
     if (user.stage === 'consent') {
         if (text.toLowerCase().includes('согласен') || text.toLowerCase() === 'ок') {
             user.stage = 'goal';
-            return ctx.reply('🏠 Какую недвижимость вы рассматриваете?');
+            return ctx.reply('🏠 Какую недвижимость вы ищете?\nНапишите один из вариантов:\n• Новостройка\n• Вторичка\n• Загородный дом\n• Другое');
+        } else {
+            return ctx.reply('Для продолжения напишите "Согласен".');
         }
-        return;
     }
 
+    // ==================== ОСНОВНОЙ СЦЕНАРИЙ ====================
     if (user.stage === 'goal') {
         user.goal = text;
         user.stage = 'budget';
@@ -130,29 +110,19 @@ bot.on('message_created', async (ctx) => {
         user.phone = text;
         user.stage = 'done';
 
-        if (reminders.has(userId)) {
-            clearTimeout(reminders.get(userId));
-            reminders.delete(userId);
-        }
-
         const leadText = `🔥 НОВЫЙ ЛИД\n👤 ${user.name}\n📱 ${user.phone}\n💰 ${user.budget}\n🏠 ${user.goal}`;
 
-        if (MANAGER_ID) {
-            await bot.api.sendMessageToChat({ chat_id: MANAGER_ID, text: leadText }).catch(() => { });
-        }
-        if (GROUP_ID) {
-            await bot.api.sendMessageToChat({ chat_id: GROUP_ID, text: leadText }).catch(() => { });
-        }
+        if (MANAGER_ID) await bot.api.sendMessageToChat({ chat_id: MANAGER_ID, text: leadText }).catch(() => { });
+        if (GROUP_ID) await bot.api.sendMessageToChat({ chat_id: GROUP_ID, text: leadText }).catch(() => { });
 
         await saveToSheet(user);
 
-        return ctx.reply(`Спасибо! 🎉\nМы уже подбираем варианты.\nС вами свяжется менеджер.\n\nНапишите /start, чтобы начать заново.`);
+        return ctx.reply(`✅ Спасибо! 🎉\nМы уже подбираем варианты.\nС вами свяжется менеджер в ближайшее время.\n\nНапишите /start, чтобы начать заново.`);
     }
 });
 
 // ===================== WEBHOOK =====================
 const PORT = process.env.PORT || 10000;
-
 http.createServer((req, res) => {
     if (req.method === 'POST' && req.url === '/webhook') {
         let body = '';
