@@ -117,4 +117,50 @@ bot.on('message_created', async (ctx) => {
         return ctx.reply('📱 Введите номер телефона (+79xxxxxxxxx или 89xxxxxxxxx):');
     }
 
-// ==================== 6. Т
+    // ==================== 6. ТЕЛЕФОН + ЗАВЕРШЕНИЕ ====================
+    if (user.stage === 'phone') {
+        const cleanPhone = text.replace(/[^+0-9]/g, '');
+        if (!(/^(\+7|8)\d{10}$/.test(cleanPhone))) {
+            return ctx.reply('❌ Неверный формат.\nВведите правильно, например:\n+79123456789');
+        }
+
+        user.phone = cleanPhone;
+        user.stage = 'done';
+
+        const leadText = `🔥 НОВЫЙ ЛИД\n` +
+            `👤 Имя: ${user.name}\n` +
+            `📱 Телефон: ${user.phone}\n` +
+            `🏠 Тип: ${user.real_estate_type}\n` +
+            `💳 Оплата: ${user.payment_type}\n` +
+            `💰 Бюджет: ${user.budget}`;
+
+        if (MANAGER_ID) await bot.api.sendMessageToChat({ chat_id: MANAGER_ID, text: leadText }).catch(() => { });
+        if (GROUP_ID) await bot.api.sendMessageToChat({ chat_id: GROUP_ID, text: leadText }).catch(() => { });
+
+        await saveToSheet(user);
+
+        return ctx.reply(`✅ Спасибо, ${user.name}!\nНаш специалист свяжется с вами в ближайшее время.\n\nВсего хорошего!\n\nНапишите /start, если хотите начать заново.`);
+    }
+});
+
+// ===================== WEBHOOK =====================
+const PORT = process.env.PORT || 10000;
+http.createServer((req, res) => {
+    if (req.method === 'POST' && req.url === '/webhook') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', async () => {
+            try {
+                if (body) await bot.handleUpdate(JSON.parse(body));
+                res.writeHead(200).end('ok');
+            } catch (e) {
+                console.error('Webhook error:', e);
+                res.writeHead(200).end('error');
+            }
+        });
+    } else {
+        res.writeHead(200).end('OK');
+    }
+}).listen(PORT);
+
+console.log('🚀 MAX BOT RUNNING');
