@@ -12,6 +12,7 @@ const PROCESSING_LINK = "https://disk.yandex.ru/i/your-processing";
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 
 const users = new Map();
+const reminders = new Map();
 
 // ===================== GOOGLE SHEETS =====================
 let sheets = null;
@@ -39,6 +40,28 @@ async function saveToSheet(user) {
     } catch (e) { }
 }
 
+// ===================== НАПОМИНАНИЕ =====================
+function setReminder(userId) {
+    if (reminders.has(userId)) return;
+
+    const timeout = setTimeout(async () => {
+        const user = users.get(userId);
+        if (user && user.stage !== 'done') {
+            try {
+                await bot.api.sendMessageToChat({
+                    chat_id: userId,
+                    text: `👋 Напоминание!\n\nВы начали подбор недвижимости, но не закончили.\n\nНапишите /start, чтобы продолжить.`
+                });
+            } catch (e) {
+                console.log('Reminder error:', e);
+            }
+        }
+        reminders.delete(userId);
+    }, 24 * 60 * 60 * 1000); // 24 часа
+
+    reminders.set(userId, timeout);
+}
+
 // ===================== bot_started =====================
 bot.on('bot_started', async (ctx) => {
     const userId = ctx.user?.user_id;
@@ -64,6 +87,7 @@ bot.on('message_created', async (ctx) => {
 
     if (text === '/start') {
         users.set(userId, { stage: 'consent' });
+        setReminder(userId)
         return ctx.reply(`👋 Добро пожаловать!\nНапишите "Согласен", чтобы начать.`);
     }
 
@@ -71,6 +95,7 @@ bot.on('message_created', async (ctx) => {
     if (user.stage === 'consent') {
         if (text.toLowerCase().includes('согласен') || text.toLowerCase() === 'ок') {
             user.stage = 'real_estate';
+            setReminder(userId)
             return ctx.reply(`🏠 Какую недвижимость вы ищете?\n\nНапишите один из вариантов:\n• Новостройка\n• Вторичка\n• Загородный дом\n• Другое`);
         } else {
             return ctx.reply('Для продолжения напишите "Согласен".');
@@ -117,6 +142,15 @@ bot.on('message_created', async (ctx) => {
 
         user.phone = cleanPhone;
         user.stage = 'done';
+
+        if (user.stage === 'phone') {
+            user.phone = text;
+            user.stage = 'done';
+
+            if (reminders.has(userId)) {
+                clearTimeout(reminders.get(userId));
+                reminders.delete(userId);
+            }
 
         const leadText = `🔥 НОВЫЙ ЛИД
 👤 Имя: ${user.name || '-'}
