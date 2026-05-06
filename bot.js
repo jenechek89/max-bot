@@ -135,42 +135,35 @@ bot.on('message_created', async (ctx) => {
 
     // 6. Телефон + Завершение
     if (user.stage === 'phone') {
-        const cleanPhone = text.replace(/[^+0-9]/g, '');
-        if (!(/^(\+7|8)\d{10}$/.test(cleanPhone))) {
-            return ctx.reply('❌ Неверный формат телефона.\nВведите правильно, например:\n+79123456789');
-        }
-
-        user.phone = cleanPhone;
+        user.phone = text;
         user.stage = 'done';
 
-        if (user.stage === 'phone') {
-            user.phone = text;
-            user.stage = 'done';
-
-            if (reminders.has(userId)) {
-                clearTimeout(reminders.get(userId));
-                reminders.delete(userId);
-            }
+        if (reminders.has(userId)) {
+            clearTimeout(reminders.get(userId));
+            reminders.delete(userId);
+        }
 
         const leadText = `🔥 НОВЫЙ ЛИД
-👤 Имя: ${user.name || '-'}
-📱 Телефон: ${user.phone}
-🏠 Тип: ${user.real_estate_type || '-'}
-💳 Оплата: ${user.payment_type || '-'}
-💰 Бюджет: ${user.budget || '-'}`;
-
-        console.log("Отправляемый текст в группу:", leadText);
+👤 ${user.name}
+📱 ${user.phone}
+💰 ${user.budget}
+🏠 ${user.goal}`;
 
         // Отправка менеджеру
         if (MANAGER_ID) {
-            await bot.api.sendMessageToChat(MANAGER_ID, leadText)
-                .catch(e => console.error('Manager error:', e));
+            await bot.api.sendMessageToChat({
+                chat_id: MANAGER_ID,
+                text: leadText
+            }).catch(e => console.log('Manager error:', e));
         }
 
         // Отправка в группу
         if (GROUP_ID) {
             console.log(`Попытка отправки в группу ${GROUP_ID}`);
-            await bot.api.sendMessageToChat(GROUP_ID, leadText)
+            await bot.api.sendMessageToChat({
+                chat_id: GROUP_ID,
+                text: leadText
+            })
                 .then(() => console.log('✅ Лид отправлен в группу'))
                 .catch(e => console.error('❌ Ошибка отправки в группу:', e));
         }
@@ -179,17 +172,22 @@ bot.on('message_created', async (ctx) => {
 
         return ctx.reply(`✅ Спасибо, ${user.name}!\nНаш специалист свяжется с вами в ближайшее время.\n\nВсего хорошего!\n\nНапишите /start для нового обращения.`);
     }
+}   // ← Закрывающая скобка message_created
 });
 
 // ===================== WEBHOOK =====================
 const PORT = process.env.PORT || 10000;
+
 http.createServer((req, res) => {
     if (req.method === 'POST' && req.url === '/webhook') {
         let body = '';
         req.on('data', chunk => body += chunk);
         req.on('end', async () => {
             try {
-                if (body) await bot.handleUpdate(JSON.parse(body));
+                if (body) {
+                    const update = JSON.parse(body);
+                    await bot.handleUpdate(update);
+                }
                 res.writeHead(200).end('ok');
             } catch (e) {
                 console.error('Webhook error:', e);
