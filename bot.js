@@ -58,7 +58,7 @@ function setReminder(userId) {
             }
         }
         reminders.delete(userId);
-    }, 24 * 60 * 60 * 1000); // 24 часа
+    }, 30 * 1000); // 24 часа
 
     reminders.set(userId, timeout);
 }
