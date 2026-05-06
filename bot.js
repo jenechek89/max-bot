@@ -116,16 +116,30 @@ bot.on('message_created', async (ctx) => {
         }
 
         user.phone = cleanPhone;
+        user.stage = 'done';
 
         const leadText = `🔥 НОВЫЙ ЛИД\n` +
             `👤 Имя: ${user.name}\n` +
             `📱 Телефон: ${user.phone}\n` +
-            `🏠 Тип: ${user.real_estate_type}\n` +
-            `💳 Оплата: ${user.payment_type}\n` +
-            `💰 Бюджет: ${user.budget}`;
+            `🏠 Тип: ${user.real_estate_type || '-'}\n` +
+            `💳 Оплата: ${user.payment_type || '-'}\n` +
+            `💰 Бюджет: ${user.budget || '-'}`;
 
-        if (MANAGER_ID) await bot.api.sendMessageToChat({ chat_id: MANAGER_ID, text: leadText }).catch(() => { });
-        if (GROUP_ID) await bot.api.sendMessageToChat({ chat_id: GROUP_ID, text: leadText }).catch(() => { });
+        // Отправка менеджеру
+        if (MANAGER_ID) {
+            await bot.api.sendMessageToChat({ chat_id: MANAGER_ID, text: leadText })
+                .catch(e => console.error('Ошибка отправки менеджеру:', e));
+        }
+
+        // Отправка в группу
+        if (GROUP_ID) {
+            console.log(`Попытка отправки в группу. GROUP_ID = ${GROUP_ID}`);
+            await bot.api.sendMessageToChat({ chat_id: GROUP_ID, text: leadText })
+                .then(() => console.log('✅ Лид успешно отправлен в группу'))
+                .catch(e => console.error('❌ Ошибка отправки в группу:', e));
+        } else {
+            console.log('⚠️ GROUP_ID не задан в переменных окружения');
+        }
 
         await saveToSheet(user);
 
