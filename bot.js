@@ -109,23 +109,46 @@ bot.on('message_created', async (ctx) => {
       return ctx.reply('❌ Неверный формат телефона.\nПример: +79123456789 или 89123456789');
     }
 
-    user.phone = clean;
-    user.stage = 'done';
+      // ===== PHONE (ФИНАЛ) =====
+      if (user.stage === 'phone') {
+          user.phone = text;
+          user.stage = 'done';
 
-    const leadText = `🔥 НОВЫЙ ЛИД\n👤 ${user.name}\n📱 ${user.phone}\n🏠 ${user.real_estate_type}\n💳 ${user.payment_type}\n💰 ${user.budget}`;
+          if (reminders.has(userId)) {
+              clearTimeout(reminders.get(userId));
+              reminders.delete(userId);
+          }
 
-    if (MANAGER_ID) await bot.api.sendMessage({ chat_id: MANAGER_ID, text: leadText });
-    if (GROUP_ID) await bot.api.sendMessage({ chat_id: GROUP_ID, text: leadText });
-    await saveToSheet(user);
+          const leadText = `🔥 НОВЫЙ ЛИД
+👤 ${user.name}
+📱 ${user.phone}
+💰 ${user.budget}
+🏠 ${user.goal}`;
 
-    await ctx.reply(`✅ Спасибо, ${user.name}!\nНаш специалист свяжется с вами в ближайшее время.\n\nВсего хорошего!`);
-    users.delete(userId);
-  }
+          // Отправка менеджеру
+          if (MANAGER_ID) {
+              await bot.api.sendMessageToChat({
+                  chat_id: MANAGER_ID,
+                  text: leadText
+              }).catch(e => console.log('Manager send error:', e));
+          }
 
-  if (text === '/start') {
-    users.set(userId, { stage: 'consent' });
-    await ctx.reply('Начинаем заново 👇\nНапишите "Согласен", чтобы продолжить.');
-  }
+          // Отправка в группу
+          if (GROUP_ID) {
+              await bot.api.sendMessageToChat({
+                  chat_id: GROUP_ID,
+                  text: leadText
+              }).catch(e => console.log('Group send error:', e));
+          }
+
+          await saveToSheet(user);
+
+          return ctx.reply(`Спасибо! 🎉
+Мы уже подбираем варианты.
+С вами свяжется менеджер в ближайшее время.
+
+Напишите /start, чтобы начать заново.`);
+      }
 });
 
 // Webhook
