@@ -91,6 +91,9 @@ bot.on('message_created', async (ctx: any) => {
 
 // ===================== WEBHOOK =====================
 const PORT = process.env.PORT || 10000;
+
+console.log(`🌐 Запуск webhook сервера на порту ${PORT}`);
+
 http.createServer((req, res) => {
     if (req.method === 'POST' && req.url === '/webhook') {
         let body = '';
@@ -99,9 +102,7 @@ http.createServer((req, res) => {
             try {
                 const update = JSON.parse(body);
                 console.log(`📥 Update type: ${update.update_type}`);
-
-                // Обход private свойства
-                (bot as any).handleUpdate(update);
+                await bot.handleUpdate(update);
             } catch (e) {
                 console.error('Webhook error:', e);
             }
@@ -110,6 +111,6 @@ http.createServer((req, res) => {
     } else {
         res.writeHead(200).end('OK');
     }
-}).listen(PORT);
-
-console.log('🌐 Webhook сервер запущен на порту', PORT);
+}).listen(PORT, () => {
+    console.log(`✅ Webhook сервер успешно запущен на порту ${PORT}`);
+});
