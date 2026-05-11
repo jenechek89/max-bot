@@ -1,0 +1,17 @@
+{
+  "name": "max-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/bot.js"
+  },
+  "dependencies": {
+    "@maxhub/max-bot-api": "latest",
+    "googleapis": "latest"
+  },
+  "devDependencies": {
+    "typescript": "latest",
+    "@types/node": "latest"
+  }
+}
