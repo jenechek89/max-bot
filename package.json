@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/bot.js"
+    "start": "node dist/bot.js",
+    "dev": "ts-node bot.ts"
   },
   "dependencies": {
     "@maxhub/max-bot-api": "latest",
@@ -12,6 +13,7 @@
   },
   "devDependencies": {
     "typescript": "latest",
-    "@types/node": "latest"
+    "@types/node": "latest",
+    "ts-node": "latest"
   }
 }
