@@ -71,7 +71,6 @@ bot.on('message_created', async (ctx) => {
         users.set(userId, { stage: 'consent' });
         return ctx.reply(`👋 Добро пожаловать!\nНапишите "Согласен", чтобы начать.`);
     }
-    // Добавь сюда свой остальной сценарий по необходимости
 });
 // ===================== WEBHOOK =====================
 const PORT = process.env.PORT || 10000;
@@ -83,7 +82,7 @@ http.createServer((req, res) => {
             try {
                 const update = JSON.parse(body);
                 console.log(`📥 Update type: ${update.update_type}`);
-                // Обход private свойства
+                // Обход private метода
                 bot.handleUpdate(update);
             }
             catch (e) {
@@ -95,5 +94,7 @@ http.createServer((req, res) => {
     else {
         res.writeHead(200).end('OK');
     }
-}).listen(PORT);
-console.log('🌐 Webhook сервер запущен на порту', PORT);
+}).listen(PORT, () => {
+    console.log(`🌐 Webhook сервер запущен на порту ${PORT}`);
+});
+console.log('🚀 MAX Bot (TypeScript) готов');
